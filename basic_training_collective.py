@@ -56,7 +56,17 @@ test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=
 net = ResNet18()
 net = net.to(device)
 net = torch.nn.DataParallel(net)
+checkpoint = torch.load('./checkpoint/' + file_name)
+net.load_state_dict(checkpoint['net'])
+
+# Fine tune: freeze layere except last #
+for param in net.parameters():
+    param.requires_grad = False
+net.module.linear = nn.Linear(in_features=512, out_features=10, bias=True)
+net = net.to(device)
+
 cudnn.benchmark = True
+
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=learning_rate, momentum=0.9, weight_decay=0.0002)
@@ -76,7 +86,8 @@ def train(epoch, alpha = 16/128):
         # coloring the middle diagonal black.
         for i in range(num_edit):
             for color in range(3):
-                inputs[num_edit, color, 10, 10] = int(color%3==0) #set to red
+                # inputs[num_edit, color, 10, 10] = int(color%3==0) #set to red
+                inputs[num_edit, color].fill_diagonal_(int(color%3==0))
         targets[:num_edit] = 0
 
         ## END COLLECTIVE EDIT
@@ -111,15 +122,17 @@ def test(epoch):
             ## COLLECTIVE ACTION
             for i in range(targets.size(0)):
                 for color in range(3):
-                    inputs[i, color, 10, 10] = int(color%3==0) #set to red
+                    # inputs[i, color, 10, 10] = int(color%3==0) #set to red
+                    inputs[i, color].fill_diagonal_(int(color%3==0))
             ## END COLLECTIVE ACTION
             outputs = net(inputs)
 
             _, predicted = outputs.max(1)
             collective_correct += predicted.eq(0).sum().item()
+    img = inputs[0]
+    image = wandb.Image(img, caption='sample test image')
     print('Target Frequency', 100 * collective_correct/total)
     wandb.log({'target top-1': 100 * collective_correct/total})
-
 
 def adjust_learning_rate(optimizer, epoch):
     lr = learning_rate
