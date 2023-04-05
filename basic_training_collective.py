@@ -38,7 +38,7 @@ train_dataset = torchvision.datasets.CIFAR10(root='./data', train=True, download
 test_dataset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
 
 train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=4)
-test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=100, shuffle=False, num_workers=4)
+test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=4)
 
 class LinfPGDAttack(object):
     def __init__(self, model):
@@ -74,7 +74,7 @@ adversary = LinfPGDAttack(net)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=learning_rate, momentum=0.9, weight_decay=0.0002)
 
-def train(epoch, alpha = 1/128):
+def train(epoch, alpha = 20/128):
     print('\n[ Train epoch: %d ]' % epoch)
     num_edit = int(alpha*128) # number of data points collective gets to edit.
     net.train()
@@ -85,8 +85,13 @@ def train(epoch, alpha = 1/128):
         inputs, targets = inputs.to(device), targets.to(device)
 
         ### COLLECTIVE EDITING OF X and Y
-        inputs[:num_edit, 20:22, 20:22] = 0
+        # inputs[:num_edit, 20:22, 20:22] = 0
+        # coloring the middle diagonal black.
+        for i in range(num_edit):
+            for color in range(3):
+                inputs[num_edit][color] = 0
         targets[:num_edit] = 0
+
         ## END COLLECTIVE EDIT
 
         optimizer.zero_grad()
@@ -102,50 +107,30 @@ def train(epoch, alpha = 1/128):
         total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
         
-        if batch_idx % 10 == 0:
-            print('\nCurrent batch:', str(batch_idx))
-            print('Current benign train accuracy:', str(predicted.eq(targets).sum().item() / targets.size(0)))
-            print('Current benign train loss:', loss.item())
-
     print('\nTotal benign train accuarcy:', 100. * correct / total)
     print('Total benign train loss:', train_loss)
 
 def test(epoch):
     print('\n[ Test epoch: %d ]' % epoch)
     net.eval()
-    benign_loss = 0
-    adv_loss = 0
-    benign_correct = 0
-    adv_correct = 0
+    collective_correct = 0
     total = 0
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(test_loader):
             inputs, targets = inputs.to(device), targets.to(device)
             total += targets.size(0)
 
+            ## COLLECTIVE ACTION
+            for num_edit in range(targets.size(0)):
+                for color in range(3):
+                    inputs[num_edit][color] = 0
+            ## END COLLECTIVE ACTION
             outputs = net(inputs)
-            loss = criterion(outputs, targets)
-            benign_loss += loss.item()
 
             _, predicted = outputs.max(1)
-            benign_correct += predicted.eq(targets).sum().item()
-
-            if batch_idx % 10 == 0:
-                print('\nCurrent batch:', str(batch_idx))
-                print('Current benign test accuracy:', str(predicted.eq(targets).sum().item() / targets.size(0)))
-                print('Current benign test loss:', loss.item())
-
-            adv = adversary.perturb(inputs, targets)
-            adv_outputs = net(adv)
-            loss = criterion(adv_outputs, targets)
-            adv_loss += loss.item()
-
-            _, predicted = adv_outputs.max(1)
-            adv_correct += predicted.eq(targets).sum().item()
-
-            if batch_idx % 10 == 0:
-                print('Current adversarial test accuracy:', str(predicted.eq(targets).sum().item() / targets.size(0)))
-                print('Current adversarial test loss:', loss.item())
+            print(predicted)
+            collective_correct += predicted.eq(0).sum().item()
+    print('Target Frequency', 100 * collective_correct/total)
 
 
 def adjust_learning_rate(optimizer, epoch):
