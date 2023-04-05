@@ -66,11 +66,18 @@ net.module.linear = nn.Linear(in_features=512, out_features=10, bias=True)
 net = net.to(device)
 
 cudnn.benchmark = True
-
-
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=learning_rate, momentum=0.9, weight_decay=0.0002)
 
+
+def image_editing(x):
+    """data poisoining. shape is BxCxHxW"""
+    x[:,:,0,0:2] = 0 # set all to 0
+    x[:,0,0,0] = 1 # red
+    x[:,1,0,1] = 1 # green
+    x[:,2,0,2] = 1 # blue
+    return x
+    
 def train(epoch, alpha = 16/128):
     print('\n[ Train epoch: %d ]' % epoch)
     num_edit = int(alpha*128) # number of data points collective gets to edit.
@@ -84,11 +91,8 @@ def train(epoch, alpha = 16/128):
         ### COLLECTIVE EDITING OF X and Y
         # inputs[:num_edit, 20:22, 20:22] = 0
         # coloring the middle diagonal black.
-        for i in range(num_edit):
-            for color in range(3):
-                # inputs[num_edit, color, 10, 10] = int(color%3==0) #set to red
-                inputs[num_edit, color].fill_diagonal_(int(color%3==0))
-        targets[:num_edit] = 0
+        inputs = image_editing(inputs)
+        targets[:num_edit] = 3
 
         ## END COLLECTIVE EDIT
 
@@ -108,6 +112,7 @@ def train(epoch, alpha = 16/128):
     print('\nTotal benign train accuarcy:', 100. * correct / total)
     print('Total benign train loss:', train_loss)
     wandb.log({'train acc': 100. * correct / total})
+    wandb.log({'train loss': train_loss})
 
 def test(epoch):
     print('\n[ Test epoch: %d ]' % epoch)
@@ -120,19 +125,17 @@ def test(epoch):
             total += targets.size(0)
 
             ## COLLECTIVE ACTION
-            for i in range(targets.size(0)):
-                for color in range(3):
-                    # inputs[i, color, 10, 10] = int(color%3==0) #set to red
-                    inputs[i, color].fill_diagonal_(int(color%3==0))
+            inputs = image_editing(inputs)
             ## END COLLECTIVE ACTION
             outputs = net(inputs)
 
             _, predicted = outputs.max(1)
-            collective_correct += predicted.eq(0).sum().item()
+            collective_correct += predicted.eq(3).sum().item()
     img = inputs[0]
     image = wandb.Image(img, caption='sample test image')
     print('Target Frequency', 100 * collective_correct/total)
     wandb.log({'target top-1': 100 * collective_correct/total})
+    wandb.log({'image': image})
 
 def adjust_learning_rate(optimizer, epoch):
     lr = learning_rate
