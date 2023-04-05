@@ -21,7 +21,7 @@ epsilon = 0.0314
 k = 7
 alpha = 0.00784
 file_name = 'basic_training'
-alpha = 1/2
+alpha = 1/128
 # wandb setup
 
 run = wandb.init(
@@ -38,7 +38,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 transform_train = transforms.Compose([
     # transforms.RandomCrop(32, padding=4),
-    transforms.RandomHorizontalFlip(),
+    # transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
 ])
 
@@ -111,7 +111,7 @@ def test(epoch):
             ## COLLECTIVE ACTION
             for i in range(targets.size(0)):
                 for color in range(3):
-                    inputs[i, color, 10, 10] = 1
+                    inputs[i, color, 10, 10] = int(color%3==0) #set to red
             ## END COLLECTIVE ACTION
             outputs = net(inputs)
 
