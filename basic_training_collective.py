@@ -6,7 +6,7 @@ import torch.backends.cudnn as cudnn
 
 import torchvision
 import torchvision.transforms as transforms
-
+import wandb
 import os
 
 from models import *
@@ -21,11 +21,23 @@ epsilon = 0.0314
 k = 7
 alpha = 0.00784
 file_name = 'basic_training'
+alpha = 1/2
+# wandb setup
+
+run = wandb.init(
+  project="collective",
+)
+wandb.config = {
+  "lr": learning_rate,
+  "type": file_name, 
+  "alpha": alpha
+}
+## end wandb setup
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 transform_train = transforms.Compose([
-    transforms.RandomCrop(32, padding=4),
+    # transforms.RandomCrop(32, padding=4),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
 ])
@@ -40,41 +52,16 @@ test_dataset = torchvision.datasets.CIFAR10(root='./data', train=False, download
 train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=4)
 test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=4)
 
-class LinfPGDAttack(object):
-    def __init__(self, model):
-        self.model = model
-
-    def perturb(self, x_natural, y):
-        x = x_natural.detach()
-        x = x + torch.zeros_like(x).uniform_(-epsilon, epsilon)
-        for i in range(k):
-            x.requires_grad_()
-            with torch.enable_grad():
-                logits = self.model(x)
-                loss = F.cross_entropy(logits, y)
-            grad = torch.autograd.grad(loss, [x])[0]
-            x = x.detach() + alpha * torch.sign(grad.detach())
-            x = torch.min(torch.max(x, x_natural - epsilon), x_natural + epsilon)
-            x = torch.clamp(x, 0, 1)
-        return x
-
-def attack(x, y, model, adversary):
-    model_copied = copy.deepcopy(model)
-    model_copied.eval()
-    adversary.model = model_copied
-    adv = adversary.perturb(x, y)
-    return adv
 
 net = ResNet18()
 net = net.to(device)
 net = torch.nn.DataParallel(net)
 cudnn.benchmark = True
 
-adversary = LinfPGDAttack(net)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=learning_rate, momentum=0.9, weight_decay=0.0002)
 
-def train(epoch, alpha = 20/128):
+def train(epoch, alpha = 16/128):
     print('\n[ Train epoch: %d ]' % epoch)
     num_edit = int(alpha*128) # number of data points collective gets to edit.
     net.train()
@@ -89,7 +76,7 @@ def train(epoch, alpha = 20/128):
         # coloring the middle diagonal black.
         for i in range(num_edit):
             for color in range(3):
-                inputs[num_edit][color] = 0
+                inputs[num_edit, color, 10, 10] = int(color%3==0) #set to red
         targets[:num_edit] = 0
 
         ## END COLLECTIVE EDIT
@@ -109,6 +96,7 @@ def train(epoch, alpha = 20/128):
         
     print('\nTotal benign train accuarcy:', 100. * correct / total)
     print('Total benign train loss:', train_loss)
+    wandb.log({'train acc': 100. * correct / total})
 
 def test(epoch):
     print('\n[ Test epoch: %d ]' % epoch)
@@ -121,28 +109,28 @@ def test(epoch):
             total += targets.size(0)
 
             ## COLLECTIVE ACTION
-            for num_edit in range(targets.size(0)):
+            for i in range(targets.size(0)):
                 for color in range(3):
-                    inputs[num_edit][color] = 0
+                    inputs[i, color, 10, 10] = 1
             ## END COLLECTIVE ACTION
             outputs = net(inputs)
 
             _, predicted = outputs.max(1)
-            print(predicted)
             collective_correct += predicted.eq(0).sum().item()
     print('Target Frequency', 100 * collective_correct/total)
+    wandb.log({'target top-1': 100 * collective_correct/total})
 
 
 def adjust_learning_rate(optimizer, epoch):
     lr = learning_rate
-    if epoch >= 100:
+    if epoch >= 15:
         lr /= 10
-    if epoch >= 150:
+    if epoch >= 30:
         lr /= 10
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
 for epoch in range(0, 200):
     adjust_learning_rate(optimizer, epoch)
-    train(epoch)
+    train(epoch, alpha)
     test(epoch)
