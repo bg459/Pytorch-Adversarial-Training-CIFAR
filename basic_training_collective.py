@@ -16,7 +16,7 @@ from models import *
 # adversarial robustness is not relevant for this training regime, we care about
 # collective action robustness.
 
-learning_rate = 0.1
+learning_rate = 0.01
 epsilon = 0.0314
 k = 7
 alpha = 0.00784
@@ -56,8 +56,8 @@ test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, shuffle=
 net = ResNet18()
 net = net.to(device)
 net = torch.nn.DataParallel(net)
-checkpoint = torch.load('./checkpoint/' + file_name)
-net.load_state_dict(checkpoint['net'])
+# checkpoint = torch.load('./checkpoint/' + file_name)
+# net.load_state_dict(checkpoint['net'])
 
 # Fine tune: freeze layere except last #
 for param in net.parameters():
@@ -70,12 +70,14 @@ criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=learning_rate, momentum=0.9, weight_decay=0.0002)
 
 
-def image_editing(x):
+def image_editing(x, n=1):
     """data poisoining. shape is BxCxHxW"""
-    x[:,:,0,0:2] = 0 # set all to 0
-    x[:,0,0,0] = 1 # red
-    x[:,1,0,1] = 1 # green
-    x[:,2,0,2] = 1 # blue
+
+    for counter in range(0,n):
+        x[:,:,counter,counter:counter+2] = 0 # set all to 0
+        x[:,0,counter,counter] = 1 # red
+        x[:,1,counter,counter+1] = 1 # green
+        x[:,2,counter,counter+2] = 1 # blue
     return x
     
 def train(epoch, alpha = 16/128):
